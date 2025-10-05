@@ -1,0 +1,44 @@
+═══════════════════════════════════════════════════════════════
+COMO USAR WEBCAM NO WSL - INSTRUÇÕES
+═══════════════════════════════════════════════════════════════
+
+PROBLEMA: WSL2 não tem acesso direto a webcams
+
+SOLUÇÃO RECOMENDADA: Executar o script Python no Windows
+
+═══════════════════════════════════════════════════════════════
+PASSO A PASSO:
+═══════════════════════════════════════════════════════════════
+
+1. Abra o PowerShell ou CMD do Windows (NÃO o terminal WSL)
+
+2. Instale as dependências (se ainda não tiver):
+
+   pip install opencv-python supervision inference-sdk
+
+3. Navegue até a pasta do projeto:
+
+   cd \\wsl$\Ubuntu\home\Estudo\Trabalho_Faculdade
+
+   (Ajuste "Ubuntu" se usar outra distro)
+
+4. Execute o detector:
+
+   python detector-EPI-webcam.py
+
+═══════════════════════════════════════════════════════════════
+ALTERNATIVA: Configurar USB/IP (mais complexo)
+═══════════════════════════════════════════════════════════════
+
+1. Instale usbipd-win no Windows:
+   winget install usbipd
+
+2. No PowerShell como Administrador:
+   usbipd list
+   usbipd bind --busid X-X  (substitua X-X pelo ID da webcam)
+   usbipd attach --wsl --busid X-X
+
+3. No WSL, execute:
+   python detector-EPI-webcam.py
+
+═══════════════════════════════════════════════════════════════
