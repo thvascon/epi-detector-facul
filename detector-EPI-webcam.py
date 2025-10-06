@@ -1,28 +1,20 @@
-"""
-Detector de Capacete em Tempo Real usando Webcam
-Usa modelo já treinado hospedado no Roboflow
-"""
 
 import cv2
 import supervision as sv
 from inference_sdk import InferenceHTTPClient
 
-# MODELO ROBOFLOW
 MODELO_ID = "yolov8-hat-detection/3"
 
-# API KEY do Roboflow
 API_KEY = "UCavLvCNLtLkvAL92w9H"
 
 
 def main():
-    """Função principal - Detecção em tempo real"""
     print("="*60)
     print("DETECTOR DE CAPACETE - WEBCAM")
     print("="*60)
     print("\nPressione 'q' para sair")
     print("="*60)
 
-    # Inicializa cliente Roboflow
     print("\nConectando ao Roboflow...")
     try:
         client = InferenceHTTPClient(
@@ -35,11 +27,10 @@ def main():
         print(f"❌ Erro ao conectar: {e}")
         return
 
-    # Inicializa webcam - tenta diferentes índices
     print("Procurando webcam...")
     cap = None
 
-    for i in range(5):  # Tenta índices 0 a 4
+    for i in range(5):
         print(f"  Tentando índice {i}...")
         test_cap = cv2.VideoCapture(i)
         if test_cap.isOpened():
@@ -56,7 +47,10 @@ def main():
         print("  3. Use: ls /dev/video* para ver dispositivos disponíveis")
         return
 
-    # Cria anotadores do Supervision
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FPS, 30)
+
     bounding_box_annotator = sv.BoxAnnotator(
         thickness=3,
         color=sv.Color.from_rgb_tuple((0, 255, 0))
@@ -66,67 +60,73 @@ def main():
         text_scale=0.7
     )
 
-    # Contador de frames
     frame_count = 0
+    ultima_deteccao = None
+    labels_cache = []
 
     while True:
-        # Captura frame
         ret, frame = cap.read()
 
         if not ret:
             print("❌ Erro ao capturar frame")
             break
 
-        # Processa a cada 3 frames para melhor performance
-        if frame_count % 3 == 0:
-            # Salva frame temporário
-            cv2.imwrite('temp_frame.jpg', frame)
+        # Processa a cada 5 frames para melhor performance
+        if frame_count %  10 == 0:
+            # Redimensiona frame antes de enviar (mais rápido)
+            frame_pequeno = cv2.resize(frame, (320, 320))
+
+            # Salva frame temporário com qualidade reduzida
+            cv2.imwrite('temp_frame.jpg', frame_pequeno, [cv2.IMWRITE_JPEG_QUALITY, 70])
 
             try:
                 # Faz inferência
                 resultado = client.infer('temp_frame.jpg', model_id=MODELO_ID)
 
                 # Converte para formato Supervision
-                deteccoes = sv.Detections.from_inference(resultado)
+                deteccoes_temp = sv.Detections.from_inference(resultado)
 
-                # Mapeia labels (hat -> no helmet)
-                labels = []
-                for i in range(len(deteccoes)):
-                    if deteccoes.data and 'class_name' in deteccoes.data:
-                        classe = deteccoes.data['class_name'][i].lower()
+                # Escala as detecções de volta para o tamanho original
+                if len(deteccoes_temp) > 0:
+                    scale_x = frame.shape[1] / 320
+                    scale_y = frame.shape[0] / 320
+                    deteccoes_temp.xyxy[:, [0, 2]] *= scale_x
+                    deteccoes_temp.xyxy[:, [1, 3]] *= scale_y
+
+                ultima_deteccao = deteccoes_temp
+
+                # Mapeia labels
+                labels_cache = []
+                for i in range(len(ultima_deteccao)):
+                    if ultima_deteccao.data and 'class_name' in ultima_deteccao.data:
+                        classe = ultima_deteccao.data['class_name'][i].lower()
                     else:
-                        classe = deteccoes['class_name'][i].lower() if 'class_name' in deteccoes else ''
+                        classe = ultima_deteccao['class_name'][i].lower() if 'class_name' in ultima_deteccao else ''
 
-                    if classe == 'hat':
-                        labels.append("no helmet")
+                    # Mapeia labels (modelo detecta "hat" quando SEM capacete)
+                    if 'hat' in classe and 'no' not in classe:
+                        labels_cache.append("NO HELMET")
+                    elif 'no' in classe or 'helmet' in classe:
+                        labels_cache.append("Capacete")
                     else:
-                        labels.append(classe)
-
-                # Desenha anotações
-                frame = bounding_box_annotator.annotate(
-                    scene=frame,
-                    detections=deteccoes
-                )
-                frame = label_annotator.annotate(
-                    scene=frame,
-                    detections=deteccoes,
-                    labels=labels
-                )
-
-                # Conta detecções
-                com_capacete = sum(1 for label in labels if 'helmet' in label and 'no' not in label)
-                sem_capacete = sum(1 for label in labels if 'no helmet' in label or label == 'hat')
-
-                # Adiciona texto com contagem
-                cv2.putText(frame, f"Com capacete: {com_capacete}", (10, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                cv2.putText(frame, f"Sem capacete: {sem_capacete}", (10, 70),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                        labels_cache.append(classe)
 
             except Exception as e:
-                # Em caso de erro, apenas mostra o frame
+                # Em caso de erro, mantém detecção anterior
                 cv2.putText(frame, f"Erro: {str(e)[:50]}", (10, 30),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+        # Desenha detecções em cache (mesmo quando não processa)
+        if ultima_deteccao is not None and len(ultima_deteccao) > 0:
+            frame = bounding_box_annotator.annotate(
+                scene=frame,
+                detections=ultima_deteccao
+            )
+            frame = label_annotator.annotate(
+                scene=frame,
+                detections=ultima_deteccao,
+                labels=labels_cache
+            )
 
         # Mostra frame
         cv2.imshow('Detector de Capacete - Pressione Q para sair', frame)
